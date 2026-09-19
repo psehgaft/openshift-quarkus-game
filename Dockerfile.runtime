@@ -1,4 +1,5 @@
-FROM registry.access.redhat.com/ubi9/openjdk-21-runtime:latest
+ARG BASE_IMAGE=registry.access.redhat.com/ubi9/openjdk-21-runtime:latest
+FROM ${BASE_IMAGE}
 WORKDIR /deployments
 COPY --chown=185:0 target/quarkus-app/ ./
 EXPOSE 8080
