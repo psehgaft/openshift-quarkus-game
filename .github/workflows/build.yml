@@ -12,5 +12,5 @@ jobs:
           distribution: temurin
           java-version: '21'
           cache: maven
-      - name: Test and package
-        run: mvn -B verify
+      - name: Unit and REST tests, then package
+        run: bash ci/build.sh

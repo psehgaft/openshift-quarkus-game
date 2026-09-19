@@ -1,7 +1,5 @@
 package io.github.psehgaft.game;
 
-import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import jakarta.ws.rs.Consumes;
 import jakarta.ws.rs.GET;
@@ -15,7 +13,7 @@ import jakarta.ws.rs.core.Response;
 @Path("/api/game")
 @Produces(MediaType.APPLICATION_JSON)
 public class GameResource {
-    private final List<Score> scores = new ArrayList<>();
+    private final ScoreBoard board = new ScoreBoard();
 
     public record Info(String name, String message, int boardSize, List<String> controls) {}
     public record Score(String player, int points) {}
@@ -28,22 +26,19 @@ public class GameResource {
 
     @GET
     @Path("/scores")
-    public synchronized List<Score> scores() {
-        return List.copyOf(scores);
+    public List<Score> scores() {
+        return board.topTen();
     }
 
     @POST
     @Path("/scores")
     @Consumes(MediaType.APPLICATION_JSON)
-    public synchronized Response save(Score score) {
-        if (score == null || score.player() == null || score.player().isBlank()
-                || score.player().strip().length() > 20 || score.points() < 0 || score.points() > 400) {
-            throw new WebApplicationException("Nombre (1-20 caracteres) y puntos (0-400) requeridos", 400);
+    public Response save(Score score) {
+        try {
+            Score accepted = board.add(score);
+            return Response.status(Response.Status.CREATED).entity(accepted).build();
+        } catch (IllegalArgumentException e) {
+            throw new WebApplicationException(e.getMessage(), 400);
         }
-        Score accepted = new Score(score.player().strip(), score.points());
-        scores.add(accepted);
-        scores.sort(Comparator.comparingInt(Score::points).reversed());
-        if (scores.size() > 10) scores.subList(10, scores.size()).clear();
-        return Response.status(Response.Status.CREATED).entity(accepted).build();
     }
 }
