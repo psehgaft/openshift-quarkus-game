@@ -30,6 +30,8 @@ pipeline {
         APP_NAME          = 'quarkus-game'
         IMAGE_DIGEST      = ''
         IMAGE_REF         = ''
+        // Imagen base de tiempo de ejecución fijada con su Digest sha256
+        RUNTIME_BASE_IMAGE = 'registry.access.redhat.com/ubi9/openjdk-17-runtime@sha256:a6dd4466d3a39e76317fb6f616e0ed21884dc4f3640c6c7b949c2d1dd2cf190d'
     }
 
     stages {
