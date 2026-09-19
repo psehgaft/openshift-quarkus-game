@@ -29,34 +29,38 @@ pipeline {
 
     stages {
         stage('1. Initialize Pipeline') {
-            steps {
-                script {
-                    if (params.DEPLOY_DEV && !params.PUBLISH_IMAGE) error('DEPLOY_DEV requiere PUBLISH_IMAGE')
-                    if ((params.ENABLE_TPA || params.ENABLE_RHACS || params.ENABLE_SIGNING) && !params.PUBLISH_IMAGE) {
-                        error('Los análisis de imagen y la firma requieren PUBLISH_IMAGE')
-                    }
-                    
-                    // Asegurar permisos para el wrapper y validar herramientas básicas (usa ./mvnw si mvn no está instalado)
-                    sh 'chmod +x ./mvnw && command -v java && command -v git'
+        steps {
+            script {
+                if (params.DEPLOY_DEV && !params.PUBLISH_IMAGE) error('DEPLOY_DEV requiere PUBLISH_IMAGE')
+                if ((params.ENABLE_TPA || params.ENABLE_RHACS || params.ENABLE_SIGNING) && !params.PUBLISH_IMAGE) {
+                    error('Los análisis de imagen y la firma requieren PUBLISH_IMAGE')
+                }
+                
+                // Dar permisos a ./mvnw solo si existe en el repositorio
+                sh '''
+                    if [ -f ./mvnw ]; then chmod +x ./mvnw; fi
+                    command -v java
+                    command -v git
+                '''
 
-                    if (params.PUBLISH_IMAGE) {
-                        if (!(env.QUAY_REGISTRY ==~ /quay[.]io\/[a-zA-Z0-9.-]+\/[a-zA-Z0-9.-]+/)) {
-                            error('Configura QUAY_REGISTRY con quay.io/<org>/<repo>')
-                        }
-                        if (env.QUAY_REGISTRY == 'quay.io/organization/app') error('Sustituye QUAY_REGISTRY por el repositorio Quay real')
-                        if (!env.RUNTIME_BASE_IMAGE?.contains('@sha256:')) {
-                            error('Configura RUNTIME_BASE_IMAGE en Jenkins con una imagen base aprobada fijada por @sha256:')
-                        }
-                        sh 'command -v podman && command -v syft'
+                if (params.PUBLISH_IMAGE) {
+                    if (!(env.QUAY_REGISTRY ==~ /quay[.]io\/[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+/)) {
+                        error('Configura QUAY_REGISTRY con quay.io/<org>/<repo>')
                     }
-                    if (params.DEPLOY_DEV) {
-                        if (env.OPENSHIFT_PROJECT == 'dev-environment') error('Configura OPENSHIFT_PROJECT con el namespace DEV real')
-                        if (!env.OPENSHIFT_API?.trim()) error('Configura OPENSHIFT_API en Jenkins')
-                        sh 'command -v oc && command -v curl'
+                    if (env.QUAY_REGISTRY == 'quay.io/organization/app') error('Sustituye QUAY_REGISTRY por el repositorio Quay real')
+                    if (!env.RUNTIME_BASE_IMAGE?.contains('@sha256:')) {
+                        error('Configura RUNTIME_BASE_IMAGE en Jenkins con una imagen base aprobada fijada por @sha256:')
                     }
+                    sh 'command -v podman && command -v syft'
+                }
+                if (params.DEPLOY_DEV) {
+                    if (env.OPENSHIFT_PROJECT == 'dev-environment') error('Configura OPENSHIFT_PROJECT con el namespace DEV real')
+                    if (!env.OPENSHIFT_API?.trim()) error('Configura OPENSHIFT_API en Jenkins')
+                    sh 'command -v oc && command -v curl'
                 }
             }
         }
+    }
 
         stage('2. Checkout Source & Configuration') {
             steps {
