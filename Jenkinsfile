@@ -35,9 +35,12 @@ pipeline {
                     if ((params.ENABLE_TPA || params.ENABLE_RHACS || params.ENABLE_SIGNING) && !params.PUBLISH_IMAGE) {
                         error('Los análisis de imagen y la firma requieren PUBLISH_IMAGE')
                     }
-                    sh 'command -v java && command -v mvn && command -v git'
+                    
+                    // Asegurar permisos para el wrapper y validar herramientas básicas (usa ./mvnw si mvn no está instalado)
+                    sh 'chmod +x ./mvnw && command -v java && command -v git'
+
                     if (params.PUBLISH_IMAGE) {
-                        if (!(env.QUAY_REGISTRY ==~ /quay[.]io\/[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+/)) {
+                        if (!(env.QUAY_REGISTRY ==~ /quay[.]io\/[a-zA-Z0-9.-]+\/[a-zA-Z0-9.-]+/)) {
                             error('Configura QUAY_REGISTRY con quay.io/<org>/<repo>')
                         }
                         if (env.QUAY_REGISTRY == 'quay.io/organization/app') error('Sustituye QUAY_REGISTRY por el repositorio Quay real')
@@ -78,7 +81,7 @@ pipeline {
                                 sh 'bash ci/build.sh'
                                 if (params.ENABLE_SONAR) {
                                     withSonarQubeEnv('SonarQubeServer') {
-                                        sh 'mvn -B -ntp -s ci/settings-nexus.xml sonar:sonar'
+                                        sh './mvnw -B -ntp -s ci/settings-nexus.xml sonar:sonar'
                                     }
                                 }
                             }
@@ -87,7 +90,7 @@ pipeline {
                         sh 'bash ci/build.sh'
                         if (params.ENABLE_SONAR) {
                             withSonarQubeEnv('SonarQubeServer') {
-                                sh 'mvn -B -ntp sonar:sonar'
+                                sh './mvnw -B -ntp sonar:sonar'
                             }
                         }
                     }
