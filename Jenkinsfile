@@ -20,8 +20,8 @@ pipeline {
 
     environment {
         GIT_REPO          = 'https://github.com/psehgaft/openshift-quarkus-game.git'
-        QUAY_REGISTRY     = 'quay.io/organization/app'
-        OPENSHIFT_PROJECT = 'dev-environment'
+        QUAY_REGISTRY     = 'quay-svr5h.apps.cluster-svr5h.svr5h.sandbox1725.opentlc.com/quayadmin/quarkus-game'
+        OPENSHIFT_PROJECT = 'dev-quarkus-game'
         APP_NAME          = 'quarkus-game'
         IMAGE_DIGEST      = ''
         IMAGE_REF         = ''
