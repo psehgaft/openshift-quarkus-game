@@ -119,7 +119,7 @@ El [`Jenkinsfile`](Jenkinsfile) implementa las 12 etapas del flujo propuesto. Cr
 
 ### Agente y configuración
 
-El agente Jenkins Linux debe tener **JDK 21**, **Maven 3.9+**, `git` y `bash`. El job requiere los plugins **Pipeline**, **Git**, **Credentials Binding**, **JUnit** y **AnsiColor**. Para SonarQube se necesitan **SonarQube Scanner for Jenkins** y un webhook de SonarQube a Jenkins para `waitForQualityGate`. Con `PUBLISH_IMAGE=true` también se necesitan **Podman** y **Syft**, espacio para guardar temporalmente una imagen OCI y acceso a Quay y a la imagen base. Con `DEPLOY_DEV=true` se necesitan `oc` y `curl`.
+El agente Jenkins Linux debe tener **JDK 21**, **Maven 3.9+**, `git` y `bash`. El job requiere los plugins **Pipeline**, **Git**, **Credentials Binding**, **JUnit**. Para SonarQube se necesitan **SonarQube Scanner for Jenkins** y un webhook de SonarQube a Jenkins para `waitForQualityGate`. Con `PUBLISH_IMAGE=true` también se necesitan **Podman** y **Syft**, espacio para guardar temporalmente una imagen OCI y acceso a Quay y a la imagen base. Con `DEPLOY_DEV=true` se necesitan `oc` y `curl`.
 
 Configura en el entorno del job/agent estos valores **antes** de habilitar publicación/despliegue:
 
