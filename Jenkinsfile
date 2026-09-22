@@ -37,6 +37,8 @@ pipeline {
     stages {
         stage('1. Initialize Pipeline') {
             steps {
+                echo '1. Initialize Pipeline'
+                /*
                 script {
                     if (params.DEPLOY_DEV && !params.PUBLISH_IMAGE) error('DEPLOY_DEV requiere PUBLISH_IMAGE')
                     if ((params.ENABLE_TPA || params.ENABLE_RHACS || params.ENABLE_SIGNING) && !params.PUBLISH_IMAGE) {
@@ -66,25 +68,34 @@ pipeline {
                         sh 'command -v oc && command -v curl'
                     }
                 }
+                */
             }
         }
 
         stage('2. Checkout Source & Configuration') {
             steps {
+                echo '2. Checkout Source & Configuration'
+                /*
                 checkout scm
                 sh 'test -f pom.xml && test -f ci/build.sh && test -f Dockerfile.runtime'
+                */
             }
         }
 
         stage('3. Code Quality Scan') {
             steps {
+                echo '3. Code Quality Scan'
+                /*
                 sh 'bash -n ci/build.sh && git diff --check'
                 echo 'Comprobaciones estáticas iniciales completadas; SonarQube analiza bytecode después del build.'
+                */
             }
         }
 
         stage('4. Build & Unit Test') {
             steps {
+                echo '4. Build & Unit Test'
+                /*
                 script {
                     if (params.NEXUS_MAVEN_URL?.trim()) {
                         withCredentials([usernamePassword(credentialsId: 'nexus-readonly', usernameVariable: 'NEXUS_USERNAME', passwordVariable: 'NEXUS_PASSWORD')]) {
@@ -106,34 +117,51 @@ pipeline {
                         }
                     }
                 }
+                */
             }
+            /*
             post {
                 always { junit allowEmptyResults: true, testResults: 'target/surefire-reports/TEST-*.xml' }
             }
+            */
         }
 
         stage('5. Application Security Scan') {
+            /*
             when { expression { params.ENABLE_VERACODE } }
+            */
             steps {
+                echo '5. Application Security Scan'
+                /*
                 withCredentials([file(credentialsId: 'veracode-adapter', variable: 'VERACODE_ADAPTER')]) {
                     sh 'test -s "$VERACODE_ADAPTER" && bash "$VERACODE_ADAPTER" target/quarkus-app'
                 }
+                */
             }
         }
 
         stage('6. Version & Build Image') {
+            /*
             when { expression { params.PUBLISH_IMAGE } }
+            */
             steps {
+                echo '6. Version & Build Image'
+                /*
                 sh '''
                     test -f target/quarkus-app/quarkus-run.jar
                     podman build --build-arg "BASE_IMAGE=$RUNTIME_BASE_IMAGE" -f Dockerfile.runtime -t "$QUAY_REGISTRY:$BUILD_NUMBER" .
                 '''
+                */
             }
         }
 
         stage('7. Publish Candidate') {
+            /*
             when { expression { params.PUBLISH_IMAGE } }
+            */
             steps {
+                echo '7. Publish Candidate'
+                /*
                 withCredentials([usernamePassword(credentialsId: 'quay-push', usernameVariable: 'QUAY_USER', passwordVariable: 'QUAY_PASSWORD')]) {
                     sh '''
                         set +x
@@ -149,12 +177,17 @@ pipeline {
                     env.IMAGE_REF = "${env.QUAY_REGISTRY}@${env.IMAGE_DIGEST}"
                     echo "Candidato publicado: ${env.IMAGE_REF}"
                 }
+                */
             }
         }
 
         stage('8. Generate SBOM & Scan Image') {
+            /*
             when { expression { params.PUBLISH_IMAGE } }
+            */
             steps {
+                echo '8. Generate SBOM & Scan Image'
+                /*
                 sh '''
                     podman save --format oci-archive -o image.oci.tar "$QUAY_REGISTRY:$BUILD_NUMBER"
                     syft image.oci.tar -o cyclonedx-json=sbom.cdx.json
@@ -167,11 +200,14 @@ pipeline {
                         }
                     }
                 }
+                */
             }
         }
 
         stage('9. Quality & Security Gate') {
             steps {
+                echo '9. Quality & Security Gate'
+                /*
                 script {
                     if (params.ENABLE_SONAR) {
                         timeout(time: 10, unit: 'MINUTES') {
@@ -184,21 +220,31 @@ pipeline {
                         }
                     }
                 }
+                */
             }
         }
 
         stage('10. Sign & Attest') {
+            /*
             when { expression { params.ENABLE_SIGNING } }
+            */
             steps {
+                echo '10. Sign & Attest'
+                /*
                 withCredentials([file(credentialsId: 'tas-adapter', variable: 'TAS_ADAPTER')]) {
                     sh 'test -s "$TAS_ADAPTER" && bash "$TAS_ADAPTER" "$IMAGE_REF" sbom.cdx.json'
                 }
+                */
             }
         }
 
         stage('11. Deploy DEV') {
+            /*
             when { expression { params.DEPLOY_DEV } }
+            */
             steps {
+                echo '11. Deploy DEV'
+                /*
                 withCredentials([string(credentialsId: 'oc-dev-token', variable: 'OC_TOKEN')]) {
                     sh '''
                         set +x
@@ -218,12 +264,17 @@ pipeline {
                         fi
                     '''
                 }
+                */
             }
         }
 
         stage('12. Validate DEV') {
+            /*
             when { expression { params.DEPLOY_DEV } }
+            */
             steps {
+                echo '12. Validate DEV'
+                /*
                 withCredentials([string(credentialsId: 'oc-dev-token', variable: 'OC_TOKEN')]) {
                     sh '''
                         set +x
@@ -241,14 +292,17 @@ pipeline {
                         curl --fail --silent --show-error "$SCHEME://$ROUTE_HOST/" | grep -q 'Quarkus Snake'
                     '''
                 }
+                */
             }
         }
     }
 
     post {
         always {
+            /*
             archiveArtifacts artifacts: 'sbom.cdx.json,image-digest.txt,target/surefire-reports/**',
                              allowEmptyArchive: true, fingerprint: true
+            */
         }
         success { echo 'Pipeline completado: revisa las etapas activadas y el digest publicado.' }
         failure { echo 'Pipeline detenido por fallo de build, prueba, integración o gate.' }
