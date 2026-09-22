@@ -23,12 +23,12 @@ pipeline {
     }
 
     environment {
-        GIT_REPO           = 'https://github.com/psehgaft/openshift-quarkus-game.git'
-        QUAY_REGISTRY      = 'quay-svr5h.apps.cluster-svr5h.svr5h.sandbox1725.opentlc.com/quayadmin/quarkus-game'
-        OPENSHIFT_PROJECT  = 'dev-quarkus-game'
-        APP_NAME           = 'quarkus-game'
-        IMAGE_DIGEST       = ''
-        IMAGE_REF          = ''
+        GIT_REPO          = 'https://github.com/psehgaft/openshift-quarkus-game.git'
+        QUAY_REGISTRY     = 'quay-svr5h.apps.cluster-svr5h.svr5h.sandbox1725.opentlc.com/quayadmin/quarkus-game'
+        OPENSHIFT_PROJECT = 'dev-quarkus-game'
+        APP_NAME          = 'quarkus-game'
+        IMAGE_DIGEST      = ''
+        IMAGE_REF         = ''
         RUNTIME_BASE_IMAGE = 'registry.access.redhat.com/ubi9/openjdk-17-runtime@sha256:a6dd4466d3a39e76317fb6f616e0ed21884dc4f3640c6c7b949c2d1dd2cf190d'
     }
 
@@ -36,6 +36,15 @@ pipeline {
         stage('1. Initialize Pipeline') {
             steps {
                 echo '1. Initialize Pipeline'
+                script {
+                    sh '''
+                        command -v java || echo "WARN: java no encontrado"
+                        command -v git  || echo "WARN: git no encontrado"
+                        command -v podman || echo "WARN: podman no encontrado"
+                        command -v syft || echo "WARN: syft no encontrado"
+                        command -v oc   || echo "WARN: oc no encontrado"
+                    '''
+                }
             }
         }
 
@@ -107,11 +116,11 @@ pipeline {
     }
 
     post {
-        success { 
-            echo 'Pipeline completado con éxito.' 
+        always {
+            deleteDir()
         }
-        cleanup { 
-            deleteDir() 
+        success { 
+            echo 'Pipeline completado exitosamente.' 
         }
     }
 }
