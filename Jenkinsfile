@@ -8,6 +8,7 @@ pipeline {
     }
 
     parameters {
+        // 1. URL de Nexus fijada como valor predeterminado por defecto
         string(
             name: 'NEXUS_MAVEN_URL', 
             defaultValue: 'https://nexus-openshift-operators.apps.cluster-svr5h.svr5h.sandbox1725.opentlc.com/repository/maven-public/', 
@@ -23,95 +24,234 @@ pipeline {
     }
 
     environment {
-        GIT_REPO           = 'https://github.com/psehgaft/openshift-quarkus-game.git'
-        QUAY_REGISTRY      = 'quay-svr5h.apps.cluster-svr5h.svr5h.sandbox1725.opentlc.com/quayadmin/quarkus-game'
-        OPENSHIFT_PROJECT  = 'dev-quarkus-game'
-        APP_NAME           = 'quarkus-game'
-        IMAGE_DIGEST       = ''
-        IMAGE_REF          = ''
+        GIT_REPO          = 'https://github.com/psehgaft/openshift-quarkus-game.git'
+        QUAY_REGISTRY     = 'quay-svr5h.apps.cluster-svr5h.svr5h.sandbox1725.opentlc.com/quayadmin/quarkus-game'
+        OPENSHIFT_PROJECT = 'dev-quarkus-game'
+        APP_NAME          = 'quarkus-game'
+        IMAGE_DIGEST      = ''
+        IMAGE_REF         = ''
+        // Imagen base de tiempo de ejecución fijada con su Digest sha256
         RUNTIME_BASE_IMAGE = 'registry.access.redhat.com/ubi9/openjdk-17-runtime@sha256:a6dd4466d3a39e76317fb6f616e0ed21884dc4f3640c6c7b949c2d1dd2cf190d'
     }
 
     stages {
         stage('1. Initialize Pipeline') {
             steps {
-                echo '1. Initialize Pipeline'
+                script {
+                    if (params.DEPLOY_DEV && !params.PUBLISH_IMAGE) error('DEPLOY_DEV requiere PUBLISH_IMAGE')
+                    if ((params.ENABLE_TPA || params.ENABLE_RHACS || params.ENABLE_SIGNING) && !params.PUBLISH_IMAGE) {
+                        error('Los análisis de imagen y la firma requieren PUBLISH_IMAGE')
+                    }
+                    
+                    // Dar permisos a ./mvnw solo si existe en el repositorio
+                    sh '''
+                        if [ -f ./mvnw ]; then chmod +x ./mvnw; fi
+                        command -v java
+                        command -v git
+                    '''
+
+                    if (params.PUBLISH_IMAGE) {
+                        // 2. Validación flexible para permitir rutas de Quay internas del clúster
+                        if (!env.QUAY_REGISTRY?.trim() || env.QUAY_REGISTRY == 'quay.io/organization/app') {
+                            error('Configura un QUAY_REGISTRY válido en la sección environment')
+                        }
+                        if (!env.RUNTIME_BASE_IMAGE?.contains('@sha256:')) {
+                            error('Configura RUNTIME_BASE_IMAGE en Jenkins con una imagen base aprobada fijada por @sha256:')
+                        }
+                        sh 'command -v podman && command -v syft'
+                    }
+                    if (params.DEPLOY_DEV) {
+                        if (env.OPENSHIFT_PROJECT == 'dev-environment') error('Configura OPENSHIFT_PROJECT con el namespace DEV real')
+                        if (!env.OPENSHIFT_API?.trim()) error('Configura OPENSHIFT_API en Jenkins')
+                        sh 'command -v oc && command -v curl'
+                    }
+                }
             }
         }
 
         stage('2. Checkout Source & Configuration') {
             steps {
-                echo '2. Checkout Source & Configuration'
+                checkout scm
+                sh 'test -f pom.xml && test -f ci/build.sh && test -f Dockerfile.runtime'
             }
         }
 
         stage('3. Code Quality Scan') {
             steps {
-                echo '3. Code Quality Scan'
+                sh 'bash -n ci/build.sh && git diff --check'
+                echo 'Comprobaciones estáticas iniciales completadas; SonarQube analiza bytecode después del build.'
             }
         }
 
         stage('4. Build & Unit Test') {
             steps {
-                echo '4. Build & Unit Test'
+                script {
+                    if (params.NEXUS_MAVEN_URL?.trim()) {
+                        withCredentials([usernamePassword(credentialsId: 'nexus-readonly', usernameVariable: 'NEXUS_USERNAME', passwordVariable: 'NEXUS_PASSWORD')]) {
+                            withEnv(["NEXUS_MAVEN_URL=${params.NEXUS_MAVEN_URL.trim()}"]) {
+                                sh 'bash ci/build.sh'
+                                if (params.ENABLE_SONAR) {
+                                    withSonarQubeEnv('SonarQubeServer') {
+                                        sh './mvnw -B -ntp -s ci/settings-nexus.xml sonar:sonar'
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        sh 'bash ci/build.sh'
+                        if (params.ENABLE_SONAR) {
+                            withSonarQubeEnv('SonarQubeServer') {
+                                sh './mvnw -B -ntp sonar:sonar'
+                            }
+                        }
+                    }
+                }
+            }
+            post {
+                always { junit allowEmptyResults: true, testResults: 'target/surefire-reports/TEST-*.xml' }
             }
         }
 
         stage('5. Application Security Scan') {
+            when { expression { params.ENABLE_VERACODE } }
             steps {
-                echo '5. Application Security Scan'
+                withCredentials([file(credentialsId: 'veracode-adapter', variable: 'VERACODE_ADAPTER')]) {
+                    sh 'test -s "$VERACODE_ADAPTER" && bash "$VERACODE_ADAPTER" target/quarkus-app'
+                }
             }
         }
 
         stage('6. Version & Build Image') {
+            when { expression { params.PUBLISH_IMAGE } }
             steps {
-                echo '6. Version & Build Image'
+                sh '''
+                    test -f target/quarkus-app/quarkus-run.jar
+                    podman build --build-arg "BASE_IMAGE=$RUNTIME_BASE_IMAGE" -f Dockerfile.runtime -t "$QUAY_REGISTRY:$BUILD_NUMBER" .
+                '''
             }
         }
 
         stage('7. Publish Candidate') {
+            when { expression { params.PUBLISH_IMAGE } }
             steps {
-                echo '7. Publish Candidate'
+                withCredentials([usernamePassword(credentialsId: 'quay-push', usernameVariable: 'QUAY_USER', passwordVariable: 'QUAY_PASSWORD')]) {
+                    sh '''
+                        set +x
+                        export REGISTRY_AUTH_FILE="$WORKSPACE/.quay-auth.json"
+                        printf '%s' "$QUAY_PASSWORD" | podman login quay.io --username "$QUAY_USER" --password-stdin
+                        podman push --digestfile image-digest.txt "$QUAY_REGISTRY:$BUILD_NUMBER"
+                        podman logout quay.io
+                    '''
+                }
+                script {
+                    env.IMAGE_DIGEST = readFile('image-digest.txt').trim()
+                    if (!(env.IMAGE_DIGEST ==~ /sha256:[0-9a-f]{64}/)) error('Quay no devolvió un digest válido')
+                    env.IMAGE_REF = "${env.QUAY_REGISTRY}@${env.IMAGE_DIGEST}"
+                    echo "Candidato publicado: ${env.IMAGE_REF}"
+                }
             }
         }
 
         stage('8. Generate SBOM & Scan Image') {
+            when { expression { params.PUBLISH_IMAGE } }
             steps {
-                echo '8. Generate SBOM & Scan Image'
+                sh '''
+                    podman save --format oci-archive -o image.oci.tar "$QUAY_REGISTRY:$BUILD_NUMBER"
+                    syft image.oci.tar -o cyclonedx-json=sbom.cdx.json
+                    rm image.oci.tar
+                '''
+                script {
+                    if (params.ENABLE_TPA) {
+                        withCredentials([file(credentialsId: 'tpa-adapter', variable: 'TPA_ADAPTER')]) {
+                            sh 'test -s "$TPA_ADAPTER" && bash "$TPA_ADAPTER" sbom.cdx.json "$IMAGE_REF"'
+                        }
+                    }
+                }
             }
         }
 
         stage('9. Quality & Security Gate') {
             steps {
-                echo '9. Quality & Security Gate'
+                script {
+                    if (params.ENABLE_SONAR) {
+                        timeout(time: 10, unit: 'MINUTES') {
+                            waitForQualityGate abortPipeline: true
+                        }
+                    }
+                    if (params.ENABLE_RHACS) {
+                        withCredentials([file(credentialsId: 'rhacs-adapter', variable: 'RHACS_ADAPTER')]) {
+                            sh 'test -s "$RHACS_ADAPTER" && bash "$RHACS_ADAPTER" "$IMAGE_REF"'
+                        }
+                    }
+                }
             }
         }
 
         stage('10. Sign & Attest') {
+            when { expression { params.ENABLE_SIGNING } }
             steps {
-                echo '10. Sign & Attest'
+                withCredentials([file(credentialsId: 'tas-adapter', variable: 'TAS_ADAPTER')]) {
+                    sh 'test -s "$TAS_ADAPTER" && bash "$TAS_ADAPTER" "$IMAGE_REF" sbom.cdx.json'
+                }
             }
         }
 
         stage('11. Deploy DEV') {
+            when { expression { params.DEPLOY_DEV } }
             steps {
-                echo '11. Deploy DEV'
+                withCredentials([string(credentialsId: 'oc-dev-token', variable: 'OC_TOKEN')]) {
+                    sh '''
+                        set +x
+                        export KUBECONFIG="$WORKSPACE/.kubeconfig"
+                        oc login "$OPENSHIFT_API" --token="$OC_TOKEN"
+                        oc project "$OPENSHIFT_PROJECT"
+                        if oc -n "$OPENSHIFT_PROJECT" get deployment "$APP_NAME" >/dev/null 2>&1; then
+                            oc -n "$OPENSHIFT_PROJECT" set image "deployment/$APP_NAME" "$APP_NAME=$IMAGE_REF"
+                        else
+                            oc -n "$OPENSHIFT_PROJECT" create deployment "$APP_NAME" --image="$IMAGE_REF"
+                        fi
+                        if ! oc -n "$OPENSHIFT_PROJECT" get service "$APP_NAME" >/dev/null 2>&1; then
+                            oc -n "$OPENSHIFT_PROJECT" expose deployment "$APP_NAME" --port=8080 --name="$APP_NAME"
+                        fi
+                        if ! oc -n "$OPENSHIFT_PROJECT" get route "$APP_NAME" >/dev/null 2>&1; then
+                            oc -n "$OPENSHIFT_PROJECT" expose service "$APP_NAME"
+                        fi
+                    '''
+                }
             }
         }
 
         stage('12. Validate DEV') {
+            when { expression { params.DEPLOY_DEV } }
             steps {
-                echo '12. Validate DEV'
+                withCredentials([string(credentialsId: 'oc-dev-token', variable: 'OC_TOKEN')]) {
+                    sh '''
+                        set +x
+                        export KUBECONFIG="$WORKSPACE/.kubeconfig"
+                        oc login "$OPENSHIFT_API" --token="$OC_TOKEN"
+                        oc -n "$OPENSHIFT_PROJECT" rollout status "deployment/$APP_NAME" --timeout=5m
+                        ACTUAL_IMAGE="$(oc -n "$OPENSHIFT_PROJECT" get deployment "$APP_NAME" -o jsonpath='{.spec.template.spec.containers[0].image}')"
+                        test "$ACTUAL_IMAGE" = "$IMAGE_REF"
+                        ROUTE_HOST="$(oc -n "$OPENSHIFT_PROJECT" get route "$APP_NAME" -o jsonpath='{.spec.host}')"
+                        ROUTE_TLS="$(oc -n "$OPENSHIFT_PROJECT" get route "$APP_NAME" -o jsonpath='{.spec.tls.termination}')"
+                        SCHEME=http
+                        if [ -n "$ROUTE_TLS" ]; then SCHEME=https; fi
+                        curl --fail --silent --show-error --retry 10 --retry-delay 3 "$SCHEME://$ROUTE_HOST/q/health/ready"
+                        curl --fail --silent --show-error "$SCHEME://$ROUTE_HOST/api/game"
+                        curl --fail --silent --show-error "$SCHEME://$ROUTE_HOST/" | grep -q 'Quarkus Snake'
+                    '''
+                }
             }
         }
     }
 
     post {
         always {
-            deleteDir()
+            archiveArtifacts artifacts: 'sbom.cdx.json,image-digest.txt,target/surefire-reports/**',
+                             allowEmptyArchive: true, fingerprint: true
         }
-        success { 
-            echo 'Pipeline completado exitosamente en verde.' 
-        }
+        success { echo 'Pipeline completado: revisa las etapas activadas y el digest publicado.' }
+        failure { echo 'Pipeline detenido por fallo de build, prueba, integración o gate.' }
+        cleanup { deleteDir() }
     }
 }
