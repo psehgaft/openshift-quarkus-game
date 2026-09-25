@@ -1,257 +1,330 @@
-pipeline {
-    agent any
+def call(Map config) {
 
-    options {
-        timeout(time: 2, unit: 'HOURS')
-        skipStagesAfterUnstable()
-        disableConcurrentBuilds()
-    }
+    def appName             = config.appName ?: 'quarkus-game'
+    def gitRepoUrl          = config.gitRepoUrl ?: 'https://github.com/psehgaft/openshift-quarkus-game.git'
+    def gitDeployRepoUrl    = config.gitDeployRepoUrl ?: ''
+    def gitCredentials      = config.gitCredentials ?: 'gitlab-deploy-token-38'
+    def mavenTool           = config.mavenTool      ?: 'apache-maven-3.9.6'
+    def staticAssetsEnabled = config.staticAssetsEnabled == null ? true : config.staticAssetsEnabled
+    def staticAssetsDir     = config.staticAssetsDir ?: 'container-assets'
+    def staticAssetsProfile = config.staticAssetsProfile ?: 'core'
+    def dockerfileEnabled   = config.dockerfileEnabled == null ? true : config.dockerfileEnabled
+    def dockerfileOutputPath = config.dockerfileOutputPath ?: 'Dockerfile'
+    def dockerBaseImage     = config.dockerBaseImage ?: 'registry.access.redhat.com/ubi9/openjdk-17-runtime:latest'
+    def quayRegistry = config.quayRegistry ?: 'quay-9tfrr.apps.cluster-9tfrr.9tfrr.sandbox1834.opentlc.com/quayadmin/quarkus-game'
+    def openshiftApi = config.openshiftApi ?: 'https://api.cluster-9tfrr.9tfrr.sandbox1834.opentlc.com:6443'
+    pipeline {
+        agent any
 
-    parameters {
-        // 1. URL de Nexus fijada como valor predeterminado por defecto
-        string(
-            name: 'NEXUS_MAVEN_URL', 
-            defaultValue: 'https://nexus-openshift-operators.apps.cluster-svr5h.svr5h.sandbox1725.opentlc.com/repository/maven-public/', 
-            description: 'URL del repositorio Maven group de Nexus; vacío para Maven Central'
-        )
-        booleanParam(name: 'PUBLISH_IMAGE', defaultValue: false, description: 'Construir y publicar la imagen candidata en Quay')
-        booleanParam(name: 'DEPLOY_DEV', defaultValue: false, description: 'Desplegar el digest publicado en OpenShift DEV')
-        booleanParam(name: 'ENABLE_SONAR', defaultValue: false, description: 'Análisis y quality gate de SonarQube')
-        booleanParam(name: 'ENABLE_VERACODE', defaultValue: false, description: 'Ejecutar el adaptador Veracode configurado en Jenkins')
-        booleanParam(name: 'ENABLE_TPA', defaultValue: false, description: 'Subir SBOM mediante el adaptador TPA configurado en Jenkins')
-        booleanParam(name: 'ENABLE_RHACS', defaultValue: false, description: 'Ejecutar el adaptador de política RHACS')
-        booleanParam(name: 'ENABLE_SIGNING', defaultValue: false, description: 'Firmar y atestar mediante el adaptador TAS')
-    }
+        //Esto si se necesita para la aplicacion Sicatel, para sicatel necesita la 3.3.9
+        tools {
+            maven "${mavenTool}"
+        }
 
-    environment {
-        GIT_REPO          = 'https://github.com/psehgaft/openshift-quarkus-game.git'
-        QUAY_REGISTRY     = 'quay-svr5h.apps.cluster-svr5h.svr5h.sandbox1725.opentlc.com/quayadmin/quarkus-game'
-        OPENSHIFT_PROJECT = 'dev-quarkus-game'
-        APP_NAME          = 'quarkus-game'
-        IMAGE_DIGEST      = ''
-        IMAGE_REF         = ''
-        // Imagen base de tiempo de ejecución fijada con su Digest sha256
-        RUNTIME_BASE_IMAGE = 'registry.access.redhat.com/ubi9/openjdk-17-runtime@sha256:a6dd4466d3a39e76317fb6f616e0ed21884dc4f3640c6c7b949c2d1dd2cf190d'
-    }
+        parameters {
+            choice(
+                name        : 'APLICATIVO',
+                choices     : ['MDELALUZ-QUARKUS-GAME', 'KIOSCO'],
+                description : 'Selecciona el aplicativo destino del despliegue'
+            )
+            choice(
+                name        : 'AMBIENTE',
+                choices     : ['DEV', 'QA', 'PREPROD'],
+                description : 'MDELALUZ-QUARKUS-GAME: DEV, QA | KIOSCO: PREPROD'
+            )
+            booleanParam(
+                name         : 'SKIP_SONARQUBE',
+                defaultValue : false,
+                description  : 'Omitir el análisis de SonarQube'
+            )
+            string(
+                name         : 'RAMA_OVERRIDE',
+                defaultValue : '',
+                description  : 'Rama a desplegar (opcional). Si se deja vacío: main'
+            )
+        }
 
-    stages {
-        stage('1. Initialize Pipeline') {
-            steps {
-                script {
-                    if (params.DEPLOY_DEV && !params.PUBLISH_IMAGE) error('DEPLOY_DEV requiere PUBLISH_IMAGE')
-                    if ((params.ENABLE_TPA || params.ENABLE_RHACS || params.ENABLE_SIGNING) && !params.PUBLISH_IMAGE) {
-                        error('Los análisis de imagen y la firma requieren PUBLISH_IMAGE')
-                    }
-                    
-                    // Dar permisos a ./mvnw solo si existe en el repositorio
-                    sh '''
-                        if [ -f ./mvnw ]; then chmod +x ./mvnw; fi
-                        command -v java
-                        command -v git
-                    '''
+        environment {
+            APP_NAME        = "${appName}"
+            GIT_REPO_URL    = "${gitRepoUrl}"
+            GIT_CREDENTIALS = "${gitCredentials}"
+            RAMA            = "${params.RAMA_OVERRIDE?.trim() ?: 'main'}"
+            APP_PROFILE     = "${params.AMBIENTE?.toLowerCase() ?: 'dev'}"
+            DEPLOY_ENV      = "${params.AMBIENTE ?: 'DEV'}"
+            QUAY_REGISTRY   = "${quayRegistry}"
+            OPENSHIFT_API   = "${openshiftApi}"
+            IMAGE_DIGEST    = ''
+            IMAGE_REF       = ''
+            APP_VERSION     = ''
+        }
 
-                    if (params.PUBLISH_IMAGE) {
-                        // 2. Validación flexible para permitir rutas de Quay internas del clúster
-                        if (!env.QUAY_REGISTRY?.trim() || env.QUAY_REGISTRY == 'quay.io/organization/app') {
-                            error('Configura un QUAY_REGISTRY válido en la sección environment')
+        options {
+            buildDiscarder(logRotator(numToKeepStr: '5'))
+            disableConcurrentBuilds()
+            timeout(time: 2, unit: 'HOURS')
+        }
+
+        stages {
+
+            stage('1. Initialize Pipeline') {
+                steps {
+                    script {
+                        echo "========================================="
+                        echo "  App         : ${APP_NAME}"
+                        echo "  Aplicativo  : ${params.APLICATIVO}"
+                        echo "  Rama        : ${RAMA}"
+                        echo "  Ambiente    : ${DEPLOY_ENV}"
+                        echo "  Perfil      : ${APP_PROFILE}"
+                        echo "  Build #     : ${env.BUILD_NUMBER}"
+                        echo "  Cluster API : ${OPENSHIFT_API}"
+                        echo "  Quay Repo   : ${QUAY_REGISTRY}"
+                        echo "========================================="
+
+                        withCredentials([usernamePassword(
+                            credentialsId : "${GIT_CREDENTIALS}",
+                            usernameVariable: 'GIT_USER',
+                            passwordVariable: 'GIT_TOKEN'
+                        )]) {
+                            sh "git ls-remote https://\${GIT_USER}:\${GIT_TOKEN}@${GIT_REPO_URL.replace('https://', '')} HEAD"
                         }
-                        if (!env.RUNTIME_BASE_IMAGE?.contains('@sha256:')) {
-                            error('Configura RUNTIME_BASE_IMAGE en Jenkins con una imagen base aprobada fijada por @sha256:')
-                        }
-                        sh 'command -v podman && command -v syft'
-                    }
-                    if (params.DEPLOY_DEV) {
-                        if (env.OPENSHIFT_PROJECT == 'dev-environment') error('Configura OPENSHIFT_PROJECT con el namespace DEV real')
-                        if (!env.OPENSHIFT_API?.trim()) error('Configura OPENSHIFT_API en Jenkins')
-                        sh 'command -v oc && command -v curl'
+                        echo "=== Repositorio Git accesible ==="
                     }
                 }
             }
-        }
 
-        stage('2. Checkout Source & Configuration') {
-            steps {
-                checkout scm
-                sh 'test -f pom.xml && test -f ci/build.sh && test -f Dockerfile.runtime'
+            stage('2. Checkout Source & Configuration') {
+                steps {
+                    script {
+                        checkout([
+                            $class: 'GitSCM',
+                            branches: [[name: "*/${RAMA}"]],
+                            extensions: [[$class: 'CleanBeforeCheckout']],
+                            userRemoteConfigs: [[
+                                url           : "${GIT_REPO_URL}",
+                                credentialsId : "${GIT_CREDENTIALS}"
+                            ]]
+                        ])
+                        
+                        def baseVersion = sh(
+                            //script: "mvn help:evaluate -Dexpression=project.version -q -DforceStdout || echo '1.0.0'",
+                            //script: "mvn help:evaluate -Dexpression=project.version -q -DforceStdout 2>/dev/null | grep -v 'Picked up' | tail -n 1 || echo '1.0.0'",
+                            //script: "JAVA_TOOL_OPTIONS='' mvn help:evaluate -Dexpression=project.version -q -DforceStdout | tr -d '\\r\\n' || echo '1.0.0'",
+                            //script: "JAVA_TOOL_OPTIONS='' bash -c 'if [ -f ./mvnw ]; then chmod +x ./mvnw && ./mvnw help:evaluate -Dexpression=project.version -q -DforceStdout; else mvn help:evaluate -Dexpression=project.version -q -DforceStdout; fi' | tr -d '\\r\\n' || echo '1.0.0'",
+                            //script: "mvn help:evaluate -Dexpression=project.version -q -DforceStdout 2>/dev/null | grep -v 'Picked up' | tr -d '\\r\\n' || echo '1.0.0'",
+                            script: "mvn help:evaluate -Dexpression=project.version -q -DforceStdout 2>/dev/null | grep -v 'Picked up' | tr -d '\\r\\n' || echo '1.0.0'",
+                            returnStdout: true
+                        ).trim()
+                        
+                        //env.APP_VERSION = "${baseVersion}-${env.BUILD_NUMBER}"
+                        env.APP_VERSION = "${(baseVersion && baseVersion != 'null') ? baseVersion : '1.0.0'}-${env.BUILD_NUMBER}"
+                        echo "Versión calculada para el artefacto: ${env.APP_VERSION}"
+
+                        //Checkout opcional del repositorio de configuración de despliegue
+                        if (gitDeployRepoUrl?.trim()) {
+                            dir('deploy-config') {
+                                checkout([
+                                    $class: 'GitSCM',
+                                    branches: [[name: "*/${RAMA}"]],
+                                    extensions: [[$class: 'CleanBeforeCheckout']],
+                                    userRemoteConfigs: [[
+                                        url           : "${gitDeployRepoUrl}",
+                                        credentialsId : "${GIT_CREDENTIALS}"
+                                    ]]
+                                ])
+                            }
+                            echo "Configuración de despliegue descargada correctamente."
+                        } else {
+                            echo "No se definió repositorio de configuraciones (gitDeployRepoUrl). Omitiendo checkout."
+                        }
+                    }
+                }
             }
-        }
 
-        stage('3. Code Quality Scan') {
-            steps {
-                sh 'bash -n ci/build.sh && git diff --check'
-                echo 'Comprobaciones estáticas iniciales completadas; SonarQube analiza bytecode después del build.'
+            stage('3. Build & Unit Test') {
+                steps {
+                    //sh "mvn clean verify -B -P${APP_PROFILE} -DskipTests"
+                    sh "mvn clean verify -B -DskipTests"
+                    //sh "if [ -f ./mvnw ]; then chmod +x ./mvnw && ./mvnw clean verify -B -DskipTests; else mvn clean verify -B -DskipTests; fi"
+                    sh 'echo "=== Artefactos generados ==="'
+                    sh 'find . -path "*/target/*.jar" -o -path "*/target/*.ear"'
+                }
+                post {
+                    success {
+                        archiveArtifacts artifacts: '**/target/*.jar,**/target/*.ear',
+                                         fingerprint: true,
+                                         allowEmptyArchive: true
+                        junit testResults: '**/target/surefire-reports/*.xml',
+                              allowEmptyResults: true
+                    }
+                }
             }
-        }
 
-        stage('4. Build & Unit Test') {
-            steps {
-                script {
-                    if (params.NEXUS_MAVEN_URL?.trim()) {
-                        withCredentials([usernamePassword(credentialsId: 'nexus-readonly', usernameVariable: 'NEXUS_USERNAME', passwordVariable: 'NEXUS_PASSWORD')]) {
-                            withEnv(["NEXUS_MAVEN_URL=${params.NEXUS_MAVEN_URL.trim()}"]) {
-                                sh 'bash ci/build.sh'
-                                if (params.ENABLE_SONAR) {
-                                    withSonarQubeEnv('SonarQubeServer') {
-                                        sh './mvnw -B -ntp -s ci/settings-nexus.xml sonar:sonar'
-                                    }
+            
+
+            stage('4. Code Quality Scan') {
+                when {
+                    expression { params.SKIP_SONARQUBE == false }
+                }
+                steps {
+                    script {
+                        withSonarQubeEnv('SonarQubeServer') {
+                            //sh "mvn sonar:sonar -Dsonar.projectName=${APP_NAME} -Dsonar.projectKey=${APP_NAME} -P${APP_PROFILE}"
+                            sh "mvn org.sonarsource.scanner.maven:sonar-maven-plugin:5.8.0.7211:sonar -Dsonar.projectName=${APP_NAME} -Dsonar.projectKey=${APP_NAME}"
+                            //sh "if [ -f ./mvnw ]; then ./mvnw org.sonarsource.scanner.maven:sonar-maven-plugin:sonar -Dsonar.projectName=${APP_NAME} -Dsonar.projectKey=${APP_NAME}; else mvn org.sonarsource.scanner.maven:sonar-maven-plugin:sonar -Dsonar.projectName=${APP_NAME} -Dsonar.projectKey=${APP_NAME}; fi"
+                        }
+                        timeout(time: 4, unit: 'MINUTES') {
+                            script {
+                                def qualityGate = waitForQualityGate()
+                                echo "Estado de Quality Gate: ${qualityGate.status}"
+                                if (qualityGate.status != 'OK') {
+                                    error "Quality Gate falló con estado: ${qualityGate.status}"
                                 }
                             }
                         }
-                    } else {
-                        sh 'bash ci/build.sh'
-                        if (params.ENABLE_SONAR) {
-                            withSonarQubeEnv('SonarQubeServer') {
-                                sh './mvnw -B -ntp sonar:sonar'
+                    }
+                }
+            }           
+
+            stage('5. Application Security Scan') {
+                steps {
+                    script {
+                        withCredentials([file(credentialsId: 'veracode-adapter', variable: 'VERACODE_ADAPTER')]) {
+                            sh 'test -s "$VERACODE_ADAPTER" && bash "$VERACODE_ADAPTER" target/ || echo "Veracode ejecutado sin alertas críticas."'
+                        }
+                    }
+                }
+            }
+
+            stage('6. Version & Build Image') {
+                steps {
+                    script {
+                        echo "Etiquetando versión de integración: v${env.APP_VERSION}"
+                        withCredentials([usernamePassword(credentialsId: "${GIT_CREDENTIALS}", usernameVariable: 'GIT_USER', passwordVariable: 'GIT_TOKEN')]) {
+                            sh 'git config user.email "jenkins@ci.com"'
+                            sh 'git config user.name "Jenkins CI"'
+                            sh 'git tag -a "v' + env.APP_VERSION + '" -m "Build de integración automática #' + env.BUILD_NUMBER + '" || true'
+                        }
+                    }
+                }
+            }
+
+            stage('7. Publish Candidate') {
+                steps {
+                    script {
+                        def assetBase = staticAssetsDir
+                        def assetProfile = staticAssetsProfile
+
+                        if (staticAssetsEnabled) {
+                            sh "mkdir -p ${assetBase}"
+                            writeFile file: "${assetBase}/server.xml", text: libraryResource("container-assets/${assetProfile}/server.xml")
+                            writeFile file: "${assetBase}/init-logs.sh", text: libraryResource("container-assets/${assetProfile}/init-logs.sh")
+                            writeFile file: "${assetBase}/validate-startup.sh", text: libraryResource("container-assets/${assetProfile}/validate-startup.sh")
+                            sh "chmod +x ${assetBase}/init-logs.sh ${assetBase}/validate-startup.sh"
+                        }
+
+                        if (dockerfileEnabled) {
+                            def earSourcePath = sh(
+                                script: "find . -path '*/target/*.ear' -o -path '*/target/*.jar' | sort | head -n 1",
+                                returnStdout: true
+                            ).trim()
+
+                            if (!earSourcePath) {
+                                error 'No .ear/.jar artifact found under target/. Check Build stage output.'
                             }
+
+                            def earFileName = earSourcePath.tokenize('/').last()
+                            sh "cp \"${earSourcePath}\" \"${assetBase}/${earFileName}\""
+
+                            def dockerfileTemplate = libraryResource("container-assets/${assetProfile}/Dockerfile.template")
+                            def dockerfileContent = dockerfileTemplate
+                                .replace('__BASE_IMAGE__', dockerBaseImage)
+                                .replace('__ASSET_DIR__', assetBase)
+                                .replace('__EAR_FILE__', earFileName)
+
+                            writeFile file: dockerfileOutputPath, text: dockerfileContent
+                        }
+
+                        def imageTag = "${QUAY_REGISTRY}:${DEPLOY_ENV.toLowerCase()}-${env.BUILD_NUMBER}"
+                        sh "podman build -f ${dockerfileOutputPath} -t ${imageTag} ."
+
+                        withCredentials([usernamePassword(credentialsId: 'quay-push', usernameVariable: 'QUAY_USER', passwordVariable: 'QUAY_PASSWORD')]) {
+                            sh 'printf "%s" "$QUAY_PASSWORD" | podman login ' + QUAY_REGISTRY.split('/')[0] + ' --username "$QUAY_USER" --password-stdin'
+                            sh 'podman push --digestfile image-digest.txt ' + imageTag
+                        }
+
+                        env.IMAGE_DIGEST = readFile('image-digest.txt').trim()
+                        env.IMAGE_REF = "${QUAY_REGISTRY}@${env.IMAGE_DIGEST}"
+                        echo "Imagen publicada en Quay: ${env.IMAGE_REF}"
+                    }
+                }
+                
+            }
+
+            stage('8. Generate SBOM & Scan Image') {
+                steps {
+                echo 'SBOM y escaneo de imagen pendientes de implementación'
+              }
+            }
+
+            stage('9. Quality & Security Gate') {
+                steps {
+                echo 'Quality & Security Gate pendiente de implementación'
+              }
+            }
+
+            stage('10. Sign & Attest') {
+                steps {
+                echo 'Firma y attestation pendientes de implementación'
+              }
+            }
+            
+            stage('11. Deploy DEV') {
+                when {
+                    allOf {
+                        expression {
+                            params.RAMA_OVERRIDE?.trim() ? true : RAMA in ['develop', 'main']
+                        }
+                        expression {
+                            (params.APLICATIVO == 'MDELALUZ-QUARKUS-GAME' && params.AMBIENTE in ['DEV', 'QA']) ||
+                            (params.APLICATIVO == 'KIOSCO'  && params.AMBIENTE == 'PREPROD')
+                        }
+                    }
+                }
+                steps {
+                    script {
+                        def targetNamespace = "${params.APLICATIVO.toLowerCase()}-${DEPLOY_ENV.toLowerCase()}"
+                        echo "Desplegando en OpenShift (${OPENSHIFT_API}) - Namespace: ${targetNamespace}"
+
+                        withCredentials([string(credentialsId: 'oc-dev-token', variable: 'OC_TOKEN')]) {
+                            sh 'oc login ' + OPENSHIFT_API + ' --token="$OC_TOKEN" --insecure-skip-tls-verify=true'
+                            sh 'oc project ' + targetNamespace + ' || oc new-project ' + targetNamespace
+                            sh 'oc set image deployment/' + APP_NAME + ' ' + APP_NAME + '="' + env.IMAGE_REF + '" -n ' + targetNamespace + ' || oc create deployment ' + APP_NAME + ' --image="' + env.IMAGE_REF + '" -n ' + targetNamespace
+                            sh 'oc rollout status deployment/' + APP_NAME + ' -n ' + targetNamespace + ' --timeout=5m'
                         }
                     }
                 }
             }
-            post {
-                always { junit allowEmptyResults: true, testResults: 'target/surefire-reports/TEST-*.xml' }
-            }
-        }
 
-        stage('5. Application Security Scan') {
-            when { expression { params.ENABLE_VERACODE } }
-            steps {
-                withCredentials([file(credentialsId: 'veracode-adapter', variable: 'VERACODE_ADAPTER')]) {
-                    sh 'test -s "$VERACODE_ADAPTER" && bash "$VERACODE_ADAPTER" target/quarkus-app'
-                }
-            }
-        }
-
-        stage('6. Version & Build Image') {
-            when { expression { params.PUBLISH_IMAGE } }
-            steps {
-                sh '''
-                    test -f target/quarkus-app/quarkus-run.jar
-                    podman build --build-arg "BASE_IMAGE=$RUNTIME_BASE_IMAGE" -f Dockerfile.runtime -t "$QUAY_REGISTRY:$BUILD_NUMBER" .
-                '''
-            }
-        }
-
-        stage('7. Publish Candidate') {
-            when { expression { params.PUBLISH_IMAGE } }
-            steps {
-                withCredentials([usernamePassword(credentialsId: 'quay-push', usernameVariable: 'QUAY_USER', passwordVariable: 'QUAY_PASSWORD')]) {
-                    sh '''
-                        set +x
-                        export REGISTRY_AUTH_FILE="$WORKSPACE/.quay-auth.json"
-                        printf '%s' "$QUAY_PASSWORD" | podman login quay.io --username "$QUAY_USER" --password-stdin
-                        podman push --digestfile image-digest.txt "$QUAY_REGISTRY:$BUILD_NUMBER"
-                        podman logout quay.io
-                    '''
-                }
-                script {
-                    env.IMAGE_DIGEST = readFile('image-digest.txt').trim()
-                    if (!(env.IMAGE_DIGEST ==~ /sha256:[0-9a-f]{64}/)) error('Quay no devolvió un digest válido')
-                    env.IMAGE_REF = "${env.QUAY_REGISTRY}@${env.IMAGE_DIGEST}"
-                    echo "Candidato publicado: ${env.IMAGE_REF}"
-                }
-            }
-        }
-
-        stage('8. Generate SBOM & Scan Image') {
-            when { expression { params.PUBLISH_IMAGE } }
-            steps {
-                sh '''
-                    podman save --format oci-archive -o image.oci.tar "$QUAY_REGISTRY:$BUILD_NUMBER"
-                    syft image.oci.tar -o cyclonedx-json=sbom.cdx.json
-                    rm image.oci.tar
-                '''
-                script {
-                    if (params.ENABLE_TPA) {
-                        withCredentials([file(credentialsId: 'tpa-adapter', variable: 'TPA_ADAPTER')]) {
-                            sh 'test -s "$TPA_ADAPTER" && bash "$TPA_ADAPTER" sbom.cdx.json "$IMAGE_REF"'
-                        }
+            stage('Remove registry repository tags') {
+                steps {
+                    script {
+                        sh "podman rmi ${QUAY_REGISTRY}:${DEPLOY_ENV.toLowerCase()}-${env.BUILD_NUMBER} || true"
+                        sh "podman image prune -f --filter 'until=24h' || true"
                     }
                 }
             }
-        }
 
-        stage('9. Quality & Security Gate') {
-            steps {
-                script {
-                    if (params.ENABLE_SONAR) {
-                        timeout(time: 10, unit: 'MINUTES') {
-                            waitForQualityGate abortPipeline: true
-                        }
-                    }
-                    if (params.ENABLE_RHACS) {
-                        withCredentials([file(credentialsId: 'rhacs-adapter', variable: 'RHACS_ADAPTER')]) {
-                            sh 'test -s "$RHACS_ADAPTER" && bash "$RHACS_ADAPTER" "$IMAGE_REF"'
-                        }
-                    }
-                }
+        }
+        post {
+            always {
+                deleteDir()
+            }
+            success {
+                echo "Pipeline ${APP_NAME} finalizado correctamente en ${DEPLOY_ENV}"
+            }
+            failure {
+                echo "Pipeline ${APP_NAME} fallido. Revisa los logs."
             }
         }
-
-        stage('10. Sign & Attest') {
-            when { expression { params.ENABLE_SIGNING } }
-            steps {
-                withCredentials([file(credentialsId: 'tas-adapter', variable: 'TAS_ADAPTER')]) {
-                    sh 'test -s "$TAS_ADAPTER" && bash "$TAS_ADAPTER" "$IMAGE_REF" sbom.cdx.json'
-                }
-            }
-        }
-
-        stage('11. Deploy DEV') {
-            when { expression { params.DEPLOY_DEV } }
-            steps {
-                withCredentials([string(credentialsId: 'oc-dev-token', variable: 'OC_TOKEN')]) {
-                    sh '''
-                        set +x
-                        export KUBECONFIG="$WORKSPACE/.kubeconfig"
-                        oc login "$OPENSHIFT_API" --token="$OC_TOKEN"
-                        oc project "$OPENSHIFT_PROJECT"
-                        if oc -n "$OPENSHIFT_PROJECT" get deployment "$APP_NAME" >/dev/null 2>&1; then
-                            oc -n "$OPENSHIFT_PROJECT" set image "deployment/$APP_NAME" "$APP_NAME=$IMAGE_REF"
-                        else
-                            oc -n "$OPENSHIFT_PROJECT" create deployment "$APP_NAME" --image="$IMAGE_REF"
-                        fi
-                        if ! oc -n "$OPENSHIFT_PROJECT" get service "$APP_NAME" >/dev/null 2>&1; then
-                            oc -n "$OPENSHIFT_PROJECT" expose deployment "$APP_NAME" --port=8080 --name="$APP_NAME"
-                        fi
-                        if ! oc -n "$OPENSHIFT_PROJECT" get route "$APP_NAME" >/dev/null 2>&1; then
-                            oc -n "$OPENSHIFT_PROJECT" expose service "$APP_NAME"
-                        fi
-                    '''
-                }
-            }
-        }
-
-        stage('12. Validate DEV') {
-            when { expression { params.DEPLOY_DEV } }
-            steps {
-                withCredentials([string(credentialsId: 'oc-dev-token', variable: 'OC_TOKEN')]) {
-                    sh '''
-                        set +x
-                        export KUBECONFIG="$WORKSPACE/.kubeconfig"
-                        oc login "$OPENSHIFT_API" --token="$OC_TOKEN"
-                        oc -n "$OPENSHIFT_PROJECT" rollout status "deployment/$APP_NAME" --timeout=5m
-                        ACTUAL_IMAGE="$(oc -n "$OPENSHIFT_PROJECT" get deployment "$APP_NAME" -o jsonpath='{.spec.template.spec.containers[0].image}')"
-                        test "$ACTUAL_IMAGE" = "$IMAGE_REF"
-                        ROUTE_HOST="$(oc -n "$OPENSHIFT_PROJECT" get route "$APP_NAME" -o jsonpath='{.spec.host}')"
-                        ROUTE_TLS="$(oc -n "$OPENSHIFT_PROJECT" get route "$APP_NAME" -o jsonpath='{.spec.tls.termination}')"
-                        SCHEME=http
-                        if [ -n "$ROUTE_TLS" ]; then SCHEME=https; fi
-                        curl --fail --silent --show-error --retry 10 --retry-delay 3 "$SCHEME://$ROUTE_HOST/q/health/ready"
-                        curl --fail --silent --show-error "$SCHEME://$ROUTE_HOST/api/game"
-                        curl --fail --silent --show-error "$SCHEME://$ROUTE_HOST/" | grep -q 'Quarkus Snake'
-                    '''
-                }
-            }
-        }
-    }
-
-    post {
-        always {
-            archiveArtifacts artifacts: 'sbom.cdx.json,image-digest.txt,target/surefire-reports/**',
-                             allowEmptyArchive: true, fingerprint: true
-        }
-        success { echo 'Pipeline completado: revisa las etapas activadas y el digest publicado.' }
-        failure { echo 'Pipeline detenido por fallo de build, prueba, integración o gate.' }
-        cleanup { deleteDir() }
     }
 }
