@@ -1,16 +1,16 @@
-    def appName             = config.appName ?: 'quarkus-game'
-    def gitRepoUrl          = config.gitRepoUrl ?: 'https://github.com/psehgaft/openshift-quarkus-game.git'
-    def gitDeployRepoUrl    = config.gitDeployRepoUrl ?: ''
-    def gitCredentials      = config.gitCredentials ?: 'gitlab-deploy-token-38'
-    def mavenTool           = config.mavenTool      ?: 'apache-maven-3.9.6'
-    def staticAssetsEnabled = config.staticAssetsEnabled == null ? true : config.staticAssetsEnabled
-    def staticAssetsDir     = config.staticAssetsDir ?: 'container-assets'
-    def staticAssetsProfile = config.staticAssetsProfile ?: 'core'
-    def dockerfileEnabled   = config.dockerfileEnabled == null ? true : config.dockerfileEnabled
-    def dockerfileOutputPath = config.dockerfileOutputPath ?: 'Dockerfile'
-    def dockerBaseImage     = config.dockerBaseImage ?: 'registry.access.redhat.com/ubi9/openjdk-17-runtime:latest'
-    def quayRegistry = config.quayRegistry ?: 'quay-9tfrr.apps.cluster-9tfrr.9tfrr.sandbox1834.opentlc.com/quayadmin/quarkus-game'
-    def openshiftApi = config.openshiftApi ?: 'https://api.cluster-9tfrr.9tfrr.sandbox1834.opentlc.com:6443'
+    def appName             = 'quarkus-game'
+    def gitRepoUrl          = 'https://github.com/psehgaft/openshift-quarkus-game.git'
+    def gitDeployRepoUrl    = ''
+    def gitCredentials      = 'gitlab-deploy-token-38'
+    def mavenTool           = 'apache-maven-3.9.6'
+    def staticAssetsEnabled = true
+    def staticAssetsDir     = container-assets'
+    def staticAssetsProfile = 'core'
+    def dockerfileEnabled   = true
+    def dockerfileOutputPath = 'Dockerfile'
+    def dockerBaseImage     = 'registry.access.redhat.com/ubi9/openjdk-17-runtime:latest'
+    def quayRegistry = 'quay-9tfrr.apps.cluster-9tfrr.9tfrr.sandbox1834.opentlc.com/quayadmin/quarkus-game'
+    def openshiftApi = 'https://api.cluster-9tfrr.9tfrr.sandbox1834.opentlc.com:6443'
 
 
 pipeline {
