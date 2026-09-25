@@ -1,4 +1,19 @@
-    pipeline {
+    def appName             = config.appName ?: 'quarkus-game'
+    def gitRepoUrl          = config.gitRepoUrl ?: 'https://github.com/psehgaft/openshift-quarkus-game.git'
+    def gitDeployRepoUrl    = config.gitDeployRepoUrl ?: ''
+    def gitCredentials      = config.gitCredentials ?: 'gitlab-deploy-token-38'
+    def mavenTool           = config.mavenTool      ?: 'apache-maven-3.9.6'
+    def staticAssetsEnabled = config.staticAssetsEnabled == null ? true : config.staticAssetsEnabled
+    def staticAssetsDir     = config.staticAssetsDir ?: 'container-assets'
+    def staticAssetsProfile = config.staticAssetsProfile ?: 'core'
+    def dockerfileEnabled   = config.dockerfileEnabled == null ? true : config.dockerfileEnabled
+    def dockerfileOutputPath = config.dockerfileOutputPath ?: 'Dockerfile'
+    def dockerBaseImage     = config.dockerBaseImage ?: 'registry.access.redhat.com/ubi9/openjdk-17-runtime:latest'
+    def quayRegistry = config.quayRegistry ?: 'quay-9tfrr.apps.cluster-9tfrr.9tfrr.sandbox1834.opentlc.com/quayadmin/quarkus-game'
+    def openshiftApi = config.openshiftApi ?: 'https://api.cluster-9tfrr.9tfrr.sandbox1834.opentlc.com:6443'
+
+
+pipeline {
         agent any
 
         //Esto si se necesita para la aplicacion Sicatel, para sicatel necesita la 3.3.9
@@ -41,21 +56,7 @@
             IMAGE_DIGEST    = ''
             IMAGE_REF       = ''
             APP_VERSION     = ''
-            def call(Map config) {
-
-    def appName             = config.appName ?: 'quarkus-game'
-    def gitRepoUrl          = config.gitRepoUrl ?: 'https://github.com/psehgaft/openshift-quarkus-game.git'
-    def gitDeployRepoUrl    = config.gitDeployRepoUrl ?: ''
-    def gitCredentials      = config.gitCredentials ?: 'gitlab-deploy-token-38'
-    def mavenTool           = config.mavenTool      ?: 'apache-maven-3.9.6'
-    def staticAssetsEnabled = config.staticAssetsEnabled == null ? true : config.staticAssetsEnabled
-    def staticAssetsDir     = config.staticAssetsDir ?: 'container-assets'
-    def staticAssetsProfile = config.staticAssetsProfile ?: 'core'
-    def dockerfileEnabled   = config.dockerfileEnabled == null ? true : config.dockerfileEnabled
-    def dockerfileOutputPath = config.dockerfileOutputPath ?: 'Dockerfile'
-    def dockerBaseImage     = config.dockerBaseImage ?: 'registry.access.redhat.com/ubi9/openjdk-17-runtime:latest'
-    def quayRegistry = config.quayRegistry ?: 'quay-9tfrr.apps.cluster-9tfrr.9tfrr.sandbox1834.opentlc.com/quayadmin/quarkus-game'
-    def openshiftApi = config.openshiftApi ?: 'https://api.cluster-9tfrr.9tfrr.sandbox1834.opentlc.com:6443'
+            
         }
 
         options {
