@@ -4,7 +4,7 @@
     def gitCredentials      = 'gitlab-deploy-token-38'
     def mavenTool           = 'apache-maven-3.9.6'
     def staticAssetsEnabled = true
-    def staticAssetsDir     = container-assets'
+    def staticAssetsDir     = 'container-assets'
     def staticAssetsProfile = 'core'
     def dockerfileEnabled   = true
     def dockerfileOutputPath = 'Dockerfile'
