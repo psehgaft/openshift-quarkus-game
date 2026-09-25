@@ -173,7 +173,7 @@ pipeline {
                             sh "mvn org.sonarsource.scanner.maven:sonar-maven-plugin:5.8.0.7211:sonar -Dsonar.projectName=${APP_NAME} -Dsonar.projectKey=${APP_NAME}"
                             //sh "if [ -f ./mvnw ]; then ./mvnw org.sonarsource.scanner.maven:sonar-maven-plugin:sonar -Dsonar.projectName=${APP_NAME} -Dsonar.projectKey=${APP_NAME}; else mvn org.sonarsource.scanner.maven:sonar-maven-plugin:sonar -Dsonar.projectName=${APP_NAME} -Dsonar.projectKey=${APP_NAME}; fi"
                         }
-                        timeout(time: 4, unit: 'MINUTES') {
+                        timeout(time: 15, unit: 'MINUTES') {
                             script {
                                 def qualityGate = waitForQualityGate()
                                 echo "Estado de Quality Gate: ${qualityGate.status}"
@@ -248,8 +248,8 @@ pipeline {
                         def imageTag = "${QUAY_REGISTRY}:${DEPLOY_ENV.toLowerCase()}-${env.BUILD_NUMBER}"
                         sh "podman build -f ${dockerfileOutputPath} -t ${imageTag} ."
 
-                        withCredentials([usernamePassword(credentialsId: 'quay-push', usernameVariable: 'QUAY_USER', passwordVariable: 'QUAY_PASSWORD')]) {
-                            sh 'printf "%s" "$QUAY_PASSWORD" | podman login ' + QUAY_REGISTRY.split('/')[0] + ' --username "$QUAY_USER" --password-stdin'
+                        withCredentials([usernamePassword(credentialsId: 'quay-robot-sicatel', usernameVariable: 'QUAY_USER', passwordVariable: 'QUAY_TOKEN')]) {
+                            sh 'printf "%s" "$QUAY_TOKEN" | podman login ' + QUAY_REGISTRY.split('/')[0] + ' --username "$QUAY_USER" "quayRegistry"'
                             sh 'podman push --digestfile image-digest.txt ' + imageTag
                         }
 
