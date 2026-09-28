@@ -1,5 +1,30 @@
 pipeline {
-    agent any
+    agent {
+        kubernetes {
+            yaml '''
+                apiVersion: v1
+                kind: Pod
+                metadata:
+                  labels:
+                    jenkins: podman-agent
+                spec:
+                  containers:
+                  - name: podman
+                    image: quay.io/podman/stable:latest
+                    command:
+                    - cat
+                    tty: true
+                    securityContext:
+                      privileged: true
+                    volumeMounts:
+                    - mountPath: /var/lib/containers
+                      name: container-storage
+                  volumes:
+                  - name: container-storage
+                    emptyDir: {}
+                '''
+        }
+    }
 
     options {
         timeout(time: 2, unit: 'HOURS')
